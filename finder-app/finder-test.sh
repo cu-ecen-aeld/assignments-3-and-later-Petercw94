@@ -10,6 +10,14 @@ WRITESTR=AELD_IS_FUN
 WRITEDIR=/tmp/aeld-data
 username=$(cat conf/username.txt)
 
+if [ -e writer ]
+then
+	make clean
+fi
+
+# Natively compile the writer binary
+make
+
 if [ $# -lt 3 ]
 then
 	echo "Using default value ${WRITESTR} for string to write"

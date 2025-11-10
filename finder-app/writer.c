@@ -41,8 +41,10 @@ int main(int argc, char *argv[]) {
 	}
 	
 	ssize_t wb; // written bytes
-	size_t w_count = sizeof(argv[2]);
-	wb = write(fd, argv[2], w_count);
+	size_t w_count = strlen(argv[2])+1; // account for the \n character 
+	char *buf;
+	asprintf(&buf, "%s\n", argv[2]);
+	wb = write(fd, buf, w_count);
 	if (wb == -1) {
 		char *err;
 		if (errno) {
