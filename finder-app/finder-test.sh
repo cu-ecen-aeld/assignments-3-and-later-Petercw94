@@ -15,8 +15,6 @@ then
 	make clean
 fi
 
-# Natively compile the writer binary
-make
 
 if [ $# -lt 3 ]
 then
