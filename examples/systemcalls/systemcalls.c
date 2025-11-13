@@ -72,6 +72,7 @@ bool do_exec(int count, ...)
 */
 
     pid_t pid;
+    fflush(stdout);
     pid = fork();
     if (!pid) {
         execv(command[0], command);
@@ -138,6 +139,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     }
 
     pid_t pid;
+    fflush(stdout);
     pid = fork();
     if (!pid) {
         // dup2 here is making our output file map to stdout fd
