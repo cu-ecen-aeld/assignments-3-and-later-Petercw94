@@ -1,4 +1,10 @@
 #include "systemcalls.h"
+#include <errno.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 /**
  * @param cmd the command to execute with system()
@@ -17,6 +23,12 @@ bool do_system(const char *cmd)
  *   or false() if it returned a failure
 */
 
+    int ret;
+    ret = system(cmd);
+    // if system calls fails return false
+    if (ret == -1) {
+        return false;
+    }
     return true;
 }
 
@@ -34,6 +46,7 @@ bool do_system(const char *cmd)
 *   by the command issued in @param arguments with the specified arguments.
 */
 
+
 bool do_exec(int count, ...)
 {
     va_list args;
@@ -44,10 +57,9 @@ bool do_exec(int count, ...)
     {
         command[i] = va_arg(args, char *);
     }
-    command[count] = NULL;
+    command[count] = NULL; // null terminating the array as required by exec
     // this line is to avoid a compile warning before your implementation is complete
     // and may be removed
-    command[count] = command[count];
 
 /*
  * TODO:
@@ -59,6 +71,32 @@ bool do_exec(int count, ...)
  *
 */
 
+    pid_t pid;
+    pid = fork();
+    if (!pid) {
+        execv(command[0], command);
+        // if the execv call fails, exit with an error to signal the parent the child errored
+        exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+        perror("error creating child process");
+        return false;
+    } else {
+        // parent program
+        int status;
+        pid_t cpid;
+        cpid = wait(&status);
+        if (cpid < 0) {
+            perror("error waiting for child");
+            return false;
+        }
+        if (WIFEXITED(status)) {
+            // if the child process errored
+            if (WEXITSTATUS(status) == 1) {
+                return false;
+            }
+        }
+
+    }
     va_end(args);
 
     return true;
@@ -92,6 +130,35 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+    // open a file descriptor
+    int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+    if (fd == -1) {
+        perror("error opening outputfile");
+        return false;
+    }
+
+    pid_t pid;
+    pid = fork();
+    if (!pid) {
+        // dup2 here is making our output file map to stdout fd
+        if (dup2(fd, 1) == -1) {
+            perror("error converting outputfile to stdout");
+            return false;
+        }
+        // fd is no longer needed since it was successfully mapped to stdout
+        close(fd);
+        execvp(command[0], command);
+    } else if (pid < 0) {
+        perror("error in child process");
+        return false;
+    } else {
+        int status;
+        pid = wait(&status);
+        if (pid < 0) {
+            perror("error while waiting for child");
+            return false;
+        }
+    }
 
     va_end(args);
 
