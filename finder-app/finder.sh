@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 # finder script to return the number of files and number of matching lines
 # first argument: path to directory on the filesystem
 # second argument: text string to search the first files for
