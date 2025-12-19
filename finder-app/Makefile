@@ -5,6 +5,8 @@ CC := $(CROSS_COMPILE)gcc
 TARGET := writer
 SOURCE := writer.c
 
+all: default
+
 default:
 	$(CC) $(SOURCE) -o $(TARGET)
 
