@@ -101,14 +101,42 @@ int main(int argc, char *argv[]) {
 					return -1;
 				}
 	
-				fputs(buf, fp);
+				status = fwrite(buf, sizeof *buf, BUFMAXLINE, fp);
+				// TODO: check status for write failure
+				fclose(fp);
 
 			} else {
 				// just write until the new line
 				// THE READ NEEDS TO BE TERMINATED HERE
+				// NOTE: subtracting two pointers gives an index as long as the two pointers are referencing the same array
+				FILE *fp = fopen("/var/tmp/aesdsocketdata", "a+");
+				size_t loc = new_line_loc - buf;
+				loc += 1;
+				status = fwrite(buf, sizeof *buf, loc, fp);
+				// TODO: check status for write failure
+				// Close the file then reopen for reading to return the pointer to the start of the file
+				fclose(fp);
+				fp = fopen("/var/tmp/aesdsocketdata", "r");
+				// TODO: handle errors on the write 
+				// TODO: handle incomplete writes
+				// TODO: write back the full file
+				char read_buf[8192];
+				for (;;) {
+					ssize_t n = fread(read_buf, 1, sizeof read_buf, fp);
+					if (n == 0) break; // done reading
+					if (n < 0) { /* TODO: handle error here */}
+
+					size_t off = 0;
+					while (off < (size_t)n) {
+						ssize_t s = send(clientsockfd, read_buf+off, n - off,0);
+						if (s < 0){ /* TODO: handle error here */ }
+						off += s; 
+					}
+				}
+
+				fclose(fp);
+				break; // assume the packet is done once a new line has been received
 			}
-			// NOTE: subtracting two pointers gives an index as long as the two pointers are referencing the same array
-			size_t loc = new_line_loc - buf;
 
 			//syslog(LOG_INFO, "new line located at: %d", (int) loc);
 
