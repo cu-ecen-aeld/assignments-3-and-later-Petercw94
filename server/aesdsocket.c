@@ -1,3 +1,5 @@
+#include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,14 +10,34 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <syslog.h>
+#include <unistd.h>
 
 #define PORT "9000"
 #define BACKLOG 10
 #define BUFMAXLINE 4096
 
+volatile sig_atomic_t keep_running = 1;
+
+void signal_handler(int signo) {
+	keep_running = 0;
+}
+
 int main(int argc, char *argv[]) {
 	openlog("server.c", LOG_PID, LOG_USER);
 	syslog(LOG_INFO, "starting server program");
+	
+	// register signal handler
+	struct sigaction sa;
+	// clear out the initialized struct
+	memset(&sa, 0, sizeof(struct sigaction));
+	sa.sa_handler = signal_handler;
+	sa.sa_flags = 0;
+
+	sigaction(SIGINT, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
+
+
+
 	struct addrinfo hints, *res, *p;	
 	struct sockaddr_in *peer;
 	int status, sockfd, clientsockfd;
@@ -55,14 +77,23 @@ int main(int argc, char *argv[]) {
 	
 	
 	// TODO: Receives data over the connection and appends to file /var/tmp/aesdsocketdata, creating this file if it doesn't exist.
-	for (;;) {
-		if ((status = listen(sockfd, BACKLOG)) != 0) {
-			fprintf(stderr, "error on listen call");
-			return -1;
-		}
+	if ((status = listen(sockfd, BACKLOG)) != 0) {
+		fprintf(stderr, "error on listen call");
+		return -1;
+	}
+
+	while (keep_running) {
 
 		addr_size = sizeof client_addr;
-		clientsockfd = accept(sockfd, (struct sockaddr *)&client_addr, &addr_size);
+		if ((clientsockfd = accept(sockfd, (struct sockaddr *)&client_addr, &addr_size)) == -1) {
+			if (errno == EINTR) {
+				// received signal, time to cleanup
+				break;
+			} else {
+				syslog(LOG_ERR, "error during accept");
+				continue;
+			}
+		} 
 		// Logs message to the syslog "Accepted connection from xxxx" where XXXX is the IP address of the connected client
 		
 		// get the ip address (family agnostic)
@@ -81,6 +112,10 @@ int main(int argc, char *argv[]) {
 		for (;;) {
 			bytes_read = recv(clientsockfd, buf, buf_size, 0);
 			if (bytes_read == -1) { // error occured in read
+				close(clientsockfd);
+				if (errno == EINTR) {
+					break;
+				} 
 				syslog(LOG_ERR, "error recv");
 				return -1;
 			} 
@@ -101,7 +136,7 @@ int main(int argc, char *argv[]) {
 					return -1;
 				}
 	
-				status = fwrite(buf, sizeof *buf, BUFMAXLINE, fp);
+				status = fwrite(buf, sizeof *buf, bytes_read, fp);
 				// TODO: check status for write failure
 				fclose(fp);
 
@@ -120,6 +155,10 @@ int main(int argc, char *argv[]) {
 				// TODO: handle errors on the write 
 				// TODO: handle incomplete writes
 				// TODO: write back the full file
+				
+				// Send the temp file back to the client once all reading is done
+				// Can't assume the entire file will fit into memory, so need to buf the read
+				// while writing takes place.
 				char read_buf[8192];
 				for (;;) {
 					ssize_t n = fread(read_buf, 1, sizeof read_buf, fp);
@@ -138,37 +177,23 @@ int main(int argc, char *argv[]) {
 				break; // assume the packet is done once a new line has been received
 			}
 
-			//syslog(LOG_INFO, "new line located at: %d", (int) loc);
-
 		}
 				
+		syslog(LOG_INFO, "Closed connection from: %s", inet_ntop(client_addr.ss_family, addr, ipstr, sizeof ipstr));
+		close(clientsockfd);
 		
 
+		// check if an interrupt has been received
+		if (keep_running == 0) break;
 	}
 
 
 
+	syslog(LOG_INFO, "Caught signal, exiting");
+	close(sockfd);
+	unlink("/var/tmp/aesdsocketdata");
 	freeaddrinfo(res);
 	closelog();
 	return 0;
 		
-	
-
-	
-	
-	
-	// 	TODO: Use a \n to separate data packets received (each new line found in the stream read should indicated the end of the stream and an append to the data file) hint: recv returns 0 when the client closes the connection, not sure the client will close the connection in this case or if its assumed that the server will need to handle closing the connection
-	// 	TODO: assume the data stream does not include null characters (can be processed using string handling functions)
-	// 	TODO: assume the length of the packet will be shorter than the available heap size (as long as you handle malloc() associated failures with error messages you may discard associated over-length packets)
-	
-	// TODO: Returns the full content of /var/tmp/aesdsocketdata to the client as soon as the received data packet completes
-	// 	TODO: assume the total size of hte packets sent will be less than the size of hte root filesystem, however you may NOT assume this total size of all packets sent will be less than the size of the available RAM for the process heap
-	
-	// TODO: Logs message to the syslog "Closed connection from xxxx" where xxxx is the IP address of the connected client
-	
-	// TODO: restarts accepting connections from new clients forever in a loop until SIGINT or SIGTERM is received
-	
-	// TODO: Gracefully exits when SIGINT or SIGTERM is received, completing any open connection operations, closing any open sockets, and deleting the file /var/tmp/aesdsocketdata
-	// 	TODO: Logs message to the syslog "Caught signal, exiting" when SIGINT or SIGTERM is received
-	return 0;
 }
