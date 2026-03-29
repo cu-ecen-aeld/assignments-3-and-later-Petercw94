@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <linux/limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,10 +12,12 @@
 #include <netinet/in.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #define PORT "9000"
 #define BACKLOG 10
 #define BUFMAXLINE 4096
+
 
 volatile sig_atomic_t keep_running = 1;
 
@@ -22,10 +25,27 @@ void signal_handler(int signo) {
 	keep_running = 0;
 }
 
+void check_daemon_flag(int argc, char *argv[], int *daemon_flag) {
+	if (argc == 1) {
+		return;
+	}	
+
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "-d") == 0) {
+			*daemon_flag = 1;
+			return;
+		}
+	}
+}
+
 int main(int argc, char *argv[]) {
 	openlog("server.c", LOG_PID, LOG_USER);
 	syslog(LOG_INFO, "starting server program");
+	int daemon_mode = 0;
 	
+	check_daemon_flag(argc, argv, &daemon_mode);
+	
+
 	// register signal handler
 	struct sigaction sa;
 	// clear out the initialized struct
@@ -61,6 +81,19 @@ int main(int argc, char *argv[]) {
 
 	
 	sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+	if (sockfd == -1) {
+		fprintf(stderr, "error creating socket\n");
+		freeaddrinfo(res);
+		return -1;
+	}
+
+	int optval = 1;
+	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) == -1) {
+		fprintf(stderr, "error setting socket options\n");
+		close(sockfd);
+		freeaddrinfo(res);
+		return -1;
+	}
 
 	// bind
 	if ((status = bind(sockfd, res->ai_addr, res->ai_addrlen)) != 0) {
@@ -76,11 +109,37 @@ int main(int argc, char *argv[]) {
 	
 	
 	
-	// TODO: Receives data over the connection and appends to file /var/tmp/aesdsocketdata, creating this file if it doesn't exist.
 	if ((status = listen(sockfd, BACKLOG)) != 0) {
 		fprintf(stderr, "error on listen call");
 		return -1;
 	}
+
+	// TODO: check if the daemon flag is set here, if it is, hand off to a child process
+	if (daemon_mode) {
+		pid_t pid;
+		pid = fork();
+
+		if (pid == -1) return -1;
+		// parent process
+		if (pid != 0) _exit(EXIT_SUCCESS);	
+		
+
+		if (setsid() == -1) return -1;
+		if (chdir("/") == -1) return -1;
+
+		int devnull = open("/dev/null", O_RDWR);
+		if (devnull == -1) return -1;
+
+		if (dup2(devnull, STDIN_FILENO) == -1) return -1;
+		if (dup2(devnull, STDOUT_FILENO) == -1) return -1;
+		if (dup2(devnull, STDERR_FILENO) == -1) return -1;
+
+		if (devnull > STDERR_FILENO) close(devnull);
+
+
+
+	}
+	
 
 	while (keep_running) {
 
@@ -107,7 +166,7 @@ int main(int argc, char *argv[]) {
 			addr = &s->sin6_addr;
 		}
 		
-		syslog(LOG_INFO, "Accepted connection from: %s", inet_ntop(client_addr.ss_family, addr, ipstr, sizeof ipstr));
+		syslog(LOG_INFO, "Accepted connection from %s", inet_ntop(client_addr.ss_family, addr, ipstr, sizeof ipstr));
 		// read from connection
 		for (;;) {
 			bytes_read = recv(clientsockfd, buf, buf_size, 0);
@@ -179,7 +238,7 @@ int main(int argc, char *argv[]) {
 
 		}
 				
-		syslog(LOG_INFO, "Closed connection from: %s", inet_ntop(client_addr.ss_family, addr, ipstr, sizeof ipstr));
+		syslog(LOG_INFO, "Closed connection from %s", inet_ntop(client_addr.ss_family, addr, ipstr, sizeof ipstr));
 		close(clientsockfd);
 		
 
